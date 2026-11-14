@@ -307,6 +307,14 @@ impl BlockEntities {
         for (r, n) in sizes.into_iter().enumerate() {
             out[r].map.reserve(n);
         }
+        // The slots made but not yet decided on go with their block entities: the server's tick would drop them
+        // as their block entity is not in its map, and the region's tick would never make them.
+        for (pos, token) in std::mem::take(&mut self.added) {
+            match region_of(pos).filter(|&r| r < regions) {
+                Some(r) => out[r].added.push((pos, token)),
+                None => self.added.push((pos, token)),
+            }
+        }
         for (pos, entity) in self.map.extract_if(|pos, _| region_of(*pos).is_some()) {
             let r = region_of(pos).expect("extracted for its region");
             if let Some(&slot) = self.live.get(&pos) {
@@ -733,6 +741,10 @@ impl BlockEntities {
             let slot = self.next();
             self.live.insert(pos, slot);
             Arc::make_mut(&mut self.tickers).push((pos, slot));
+            // A region's slot made here is made in the level's set too when the region goes home.
+            if let Some(journal) = self.journal.as_mut() {
+                journal.push((pos, true));
+            }
         }
         for pos in std::mem::take(&mut self.replaced) {
             if self.live.contains_key(&pos) && self.ticking(state(pos)) != Ticking::Yes {

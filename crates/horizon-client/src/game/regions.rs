@@ -672,6 +672,10 @@ impl Game<'_> {
             if let Some(v) = self.last_hurt_by_player.remove(&id) {
                 w.last_hurt_by_player.insert(id, v);
             }
+            // Who led it to its death: the server's lead tick would drop it for a mob it does not hold.
+            if let Some(v) = self.lead_killers.remove(&id) {
+                w.lead_killers.insert(id, v);
+            }
         }
         w.world.game_time = self.world.game_time;
         w.world.day_time = self.world.day_time;
@@ -748,6 +752,7 @@ impl Game<'_> {
         self.love_cause.extend(w.love_cause.drain());
         self.last_hurt_by_player
             .extend(w.last_hurt_by_player.drain());
+        self.lead_killers.extend(w.lead_killers.drain());
         // What the region's tick left for the server's game, after the server's own.
         self.level_events.append(&mut w.level_events);
         self.pending.absorb(std::mem::take(&mut w.pending));

@@ -209,6 +209,27 @@ impl Ticks {
                 .torch_toggles
                 .push((pos, time));
         }
+        // Moving pistons and queued block events at the region's blocks go with it, in their order: the server's
+        // tick would find their chunks gone, and the blocks they move or the events they carry would be lost.
+        for (pos, piston) in std::mem::take(&mut self.moving_pistons) {
+            match of(&pos) {
+                Some(r) => {
+                    self.moving_piston_ids.remove(&pos);
+                    out[r].moving_piston_ids.insert(pos, piston.id);
+                    out[r].moving_pistons.push((pos, piston));
+                }
+                None => self.moving_pistons.push((pos, piston)),
+            }
+        }
+        for event in std::mem::take(&mut self.block_events) {
+            match of(&event.pos) {
+                Some(r) => {
+                    self.block_event_keys.remove(&event);
+                    out[r].queue_block_event(event);
+                }
+                None => self.block_events.push_back(event),
+            }
+        }
         out
     }
     /// A region's ticks from [`Ticks::lend`] back, with what they scheduled and queued (block events, piston
@@ -226,9 +247,14 @@ impl Ticks {
         self.next_block_entity_id = self.next_block_entity_id.max(region.next_block_entity_id);
         self.comparator_outputs.extend(region.comparator_outputs);
         self.torch_toggles.extend(region.torch_toggles);
-        self.moving_pistons.extend(region.moving_pistons);
+        for (pos, piston) in region.moving_pistons {
+            self.moving_piston_ids.insert(pos, piston.id);
+            self.moving_pistons.push((pos, piston));
+        }
         self.piston_pushes.extend(region.piston_pushes);
-        self.block_events.extend(region.block_events);
+        for event in region.block_events {
+            self.queue_block_event(event);
+        }
     }
     /// `ServerLevel.nextSubTickCount`, shared by block and fluid ticks.
     pub fn next_sub_tick(&mut self) -> i64 {
@@ -382,6 +408,29 @@ mod block_event_queue_tests {
             assert_eq!(ticks.pop_block_event(), Some(model.remove(0)));
         }
         assert_eq!(ticks.pop_block_event(), None);
+    }
+
+    /// Events queued at a lent chunk's blocks go to its region and come back in order; the others stay.
+    #[test]
+    fn lent_chunks_take_their_block_events_and_return_them() {
+        use horizon_core::position::ChunkPos;
+        let at = |x: i32, i: i32| BlockEventData {
+            pos: BlockPos::new(x, 64, 0),
+            block: BlockId(1),
+            param_a: i,
+            param_b: 0,
+        };
+        let mut ticks = Ticks::new(0);
+        for e in [at(1, 0), at(40, 1), at(2, 2), at(41, 3)] {
+            assert!(ticks.queue_block_event(e));
+        }
+        let chunks = vec![vec![ChunkPos::new(0, 0)]];
+        let mut lent = ticks.lend(&chunks, &[1], 0);
+        assert_eq!(ticks.block_events.iter().copied().collect::<Vec<_>>(), [at(40, 1), at(41, 3)]);
+        assert_eq!(lent[0].block_events.iter().copied().collect::<Vec<_>>(), [at(1, 0), at(2, 2)]);
+        ticks.take_back(lent.remove(0), &chunks[0]);
+        assert_eq!(ticks.block_events.len(), 4);
+        assert!(!ticks.queue_block_event(at(1, 0)), "the dedupe set has them again");
     }
 
     #[test]
