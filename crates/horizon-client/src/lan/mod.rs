@@ -690,14 +690,43 @@ pub struct RosterEntry {
     pub info: play::PlayerInfo,
     pub latency: Arc<std::sync::atomic::AtomicI32>,
     pub permission: u8,
+    /// The scoreboard as this player's client has it, while the player is in another hub than the one whose tick
+    /// sends the scoreboard (None: the player's own hub keeps it).
+    pub scoreboard: Option<scoreboard::View>,
 }
 
 impl Shared {
+    /// The scoreboard a player's client has, kept here while a region holds the player.
+    pub fn roster_lend_scoreboard(&self, conn: u32, view: scoreboard::View) {
+        if let Some(e) = self.roster.lock().unwrap().iter_mut().find(|e| e.conn == conn) {
+            e.scoreboard = Some(view);
+        }
+    }
+    /// The scoreboard kept for a player coming home (and the entry stops keeping one).
+    pub fn roster_return_scoreboard(&self, conn: u32) -> Option<scoreboard::View> {
+        self.roster.lock().unwrap().iter_mut().find(|e| e.conn == conn).and_then(|e| e.scoreboard.take())
+    }
+    /// Sends the scoreboard changes since each kept view to the players whose connection `own` does not hold.
+    pub fn roster_sync_scoreboard(&self, own: impl Fn(u32) -> bool, view: &scoreboard::View) {
+        for e in self.roster.lock().unwrap().iter_mut().filter(|e| !own(e.conn)) {
+            let Some(old) = e.scoreboard.as_ref().filter(|old| *old != view) else {
+                continue;
+            };
+            for packet in old.changes(view) {
+                e.sender.send(packet.encode());
+            }
+            e.scoreboard = Some(view.clone());
+        }
+    }
     /// Adds or replaces a player's roster entry.
     pub fn roster_set(&self, entry: RosterEntry) {
         let mut roster = self.roster.lock().unwrap();
         match roster.iter_mut().find(|e| e.conn == entry.conn) {
-            Some(e) => *e = entry,
+            Some(e) => {
+                let kept = e.scoreboard.take();
+                *e = entry;
+                e.scoreboard = kept;
+            }
             None => roster.push(entry),
         }
     }

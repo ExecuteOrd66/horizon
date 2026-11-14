@@ -472,12 +472,14 @@ impl Game<'_> {
     /// what changed on the board since it was last sent it (all of it on
     /// joining), lan/scoreboard.rs.
     pub(super) fn lan_sync_scoreboard(&mut self, host: &mut super::lan::LanHost) {
-        if host.hub.guests.iter().all(|g| !g.placed) {
+        if host.hub.guests.iter().all(|g| !g.placed) && !host.hub.has_roster_others() {
             return;
         }
         self.load_scoreboard();
         host.hub.teams.clone_from(&self.score.board.teams);
         let view = horizon_client::lan::scoreboard::View::of(&self.score.board);
+        // The players resident regions hold are sent the changes too, from the roster.
+        host.hub.sync_scoreboard_others(&view);
         for g in host.hub.guests.iter_mut().filter(|g| g.placed) {
             if g.scoreboard != view {
                 g.send_all(&g.scoreboard.changes(&view));

@@ -809,7 +809,13 @@ impl Hub {
         let mut kept = Vec::with_capacity(self.guests.len());
         for g in std::mem::take(&mut self.guests) {
             match region_of(g.conn) {
-                Some(r) if r < regions => out[r].push(g),
+                Some(r) if r < regions => {
+                    if g.placed && !g.fake && !self.lan.shared.roster_has(g.conn) {
+                        self.publish_guest(&g);
+                    }
+                    self.lan.shared.roster_lend_scoreboard(g.conn, g.scoreboard.clone());
+                    out[r].push(g)
+                }
                 _ => kept.push(g),
             }
         }
@@ -825,6 +831,12 @@ impl Hub {
 
     /// A region hub's guests back, with what its tick left for this hub.
     pub fn take_guests_back(&mut self, region: &mut Hub) {
+        // What the server sent their clients of the scoreboard meanwhile.
+        for g in &mut region.guests {
+            if let Some(view) = self.lan.shared.roster_return_scoreboard(g.conn) {
+                g.scoreboard = view;
+            }
+        }
         self.guests.append(&mut region.guests);
         self.native_menu_events.append(&mut region.native_menu_events);
         self.native_menu_returns.append(&mut region.native_menu_returns);
@@ -1005,6 +1017,14 @@ impl Hub {
             })
             .collect()
     }
+    /// Sends the scoreboard changes to the players in other hubs (resident regions).
+    pub fn sync_scoreboard_others(&self, view: &super::scoreboard::View) {
+        self.lan.shared.roster_sync_scoreboard(|c| self.guest(c).is_some(), view);
+    }
+    /// Whether players are in other hubs.
+    pub fn has_roster_others(&self) -> bool {
+        !self.lan.shared.roster_others(|c| self.guest(c).is_some()).is_empty()
+    }
     /// Puts this hub's placed players in the shared roster (or refreshes their entries).
     pub fn publish_roster(&self) {
         for g in self.guests.iter().filter(|g| g.placed && !g.fake) {
@@ -1019,6 +1039,7 @@ impl Hub {
             info: self.player_info(g.uuid, &g.name, g.game_mode, 0),
             latency: g.latency.clone(),
             permission: g.permission,
+            scoreboard: None,
         });
     }
     /// [`Self::broadcast`] to the held players as well, which keep a picture of
