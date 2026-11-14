@@ -1011,7 +1011,7 @@ impl Hub {
             self.publish_guest(g);
         }
     }
-    fn publish_guest(&self, g: &Guest) {
+    pub(super) fn publish_guest(&self, g: &Guest) {
         self.lan.shared.roster_set(super::RosterEntry {
             conn: g.conn,
             uuid: g.uuid,
@@ -2988,15 +2988,36 @@ impl Hub {
         self.away_events.iter().any(|e| !matches!(e, NetEvent::Packet(_, p, _) if region_local(p)))
     }
 
+    /// Whether an away player sent a chat message or a command: it reaches every player, so every region must be
+    /// home for it (the recipients' chat chains live with their players).
+    pub fn away_chat_pending(&self) -> bool {
+        self.away_events.iter().any(|e| {
+            matches!(e, NetEvent::Packet(_, p, _) if matches!(&**p, S::Chat(_) | S::ChatCommand(_) | S::ChatCommandSigned(_)))
+        })
+    }
+
     /// The packets held for `region`'s players put in their inboxes, in order, for its tick to handle.
     pub fn give_away(&mut self, region: &mut Hub) {
         if self.away_events.is_empty() {
             return;
         }
         let mine: crate::fast_hash::FxHashSet<u32> = region.guests.iter().map(|g| g.conn).collect();
-        let (given, kept): (Vec<NetEvent>, Vec<NetEvent>) = std::mem::take(&mut self.away_events)
-            .into_iter()
-            .partition(|e| matches!(e, NetEvent::Packet(conn, ..) if mine.contains(conn)));
+        // Only what stays in the region goes: a packet that reaches past it (a chat message) stays for the server's
+        // thread, with every later packet of its connection, so the order of one player's packets keeps.
+        let mut blocked: crate::fast_hash::FxHashSet<u32> = Default::default();
+        let (mut given, mut kept) = (Vec::new(), Vec::new());
+        for e in std::mem::take(&mut self.away_events) {
+            match &e {
+                NetEvent::Packet(conn, p, _) if mine.contains(conn) && !blocked.contains(conn) && region_local(p) => given.push(e),
+                NetEvent::Packet(conn, ..) | NetEvent::Left(conn, _) => {
+                    if mine.contains(conn) {
+                        blocked.insert(*conn);
+                    }
+                    kept.push(e);
+                }
+                _ => kept.push(e),
+            }
+        }
         self.away_events = kept;
         for event in given {
             if let NetEvent::Packet(conn, packet, bytes) = event

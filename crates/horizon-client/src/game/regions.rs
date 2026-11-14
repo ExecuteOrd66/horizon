@@ -1235,6 +1235,9 @@ impl Game<'_> {
                 slots.push((k, why));
             }
         };
+        if host.hub.away_chat_pending() {
+            return Some(Land::All("chat"));
+        }
         match host.hub.away_server_conns() {
             None => return Some(Land::All("packet")),
             Some(conns) => {

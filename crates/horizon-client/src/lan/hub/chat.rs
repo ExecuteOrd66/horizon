@@ -351,8 +351,9 @@ impl Hub {
             Ok(session) => {
                 let data = session.data();
                 self.guests[i].chain = Chain::keyed(session);
+                self.publish_guest(&self.guests[i]);
                 // resetPlayerChatState: INITIALIZE_CHAT to every player.
-                self.broadcast(&C::PlayerInfoUpdate(play::PlayerInfoUpdate {
+                self.broadcast_tab(&C::PlayerInfoUpdate(play::PlayerInfoUpdate {
                     actions: 2,
                     entries: vec![play::PlayerInfo {
                         uuid,
