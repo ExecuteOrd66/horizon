@@ -339,7 +339,7 @@ fn vanilla_command_info(d: &Dispatcher, label: &str) -> Option<NativeCommandInfo
 }
 
 /// A guest as server hooks see them, from the hub's record.
-fn server_player(host: &LanHost, g: &horizon_client::lan::guest::Guest) -> NativeServerPlayer {
+pub(super) fn server_player(host: &LanHost, g: &horizon_client::lan::guest::Guest) -> NativeServerPlayer {
     // Abilities.invulnerable, flying and mayfly, as `ServerPlayer.onUpdateAbilities` sends them.
     let abilities = g.ability_flags();
     // LivingEntity.DATA_LIVING_ENTITY_FLAGS: 1 while using, 2 when it is the off hand's item.
@@ -404,6 +404,7 @@ impl Game<'_> {
             .iter()
             .filter(|g| g.placed)
             .map(|g| server_player(host, g))
+            .chain(self.away_server_players())
             .collect()
     }
     /// A system line in that player's chat, also inside a player's hook for
@@ -444,7 +445,12 @@ impl Game<'_> {
             return false;
         };
         let Some(g) = host.hub.guests.iter().find(|g| g.placed && g.uuid == uuid) else {
-            return false;
+            // Away in a region: the packets reach them at its next tick.
+            let mut sent = false;
+            for packet in packets {
+                sent |= self.queue_for_away(uuid, packet, false);
+            }
+            return sent;
         };
         for packet in &packets {
             host.hub.send_to(g.conn, packet);

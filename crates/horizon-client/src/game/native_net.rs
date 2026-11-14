@@ -135,6 +135,15 @@ impl Game<'_> {
                         data,
                     }),
                 );
+            } else {
+                self.queue_for_away(
+                    player,
+                    C::CustomPayload(CustomPayload {
+                        channel: mod_net::CHANNEL.into(),
+                        data,
+                    }),
+                    true,
+                );
             }
         }
         for (player, channel, data) in std::mem::take(&mut self.native_net.payloads_to) {
@@ -146,6 +155,12 @@ impl Game<'_> {
             {
                 host.hub
                     .send_to(g.conn, &C::CustomPayload(CustomPayload { channel, data }));
+            } else {
+                self.queue_for_away(
+                    player,
+                    C::CustomPayload(CustomPayload { channel, data }),
+                    false,
+                );
             }
         }
         // The allowance is a server tick's, not a level pass's: it starts over

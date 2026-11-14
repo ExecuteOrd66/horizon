@@ -293,6 +293,9 @@ pub(super) struct RegionState {
     /// The regions just came home for nothing the server's thread has to do (their age, a player near the edge
     /// of its region): the level is split again in the same tick, instead of ticking whole on this thread.
     resplit: bool,
+    /// What native mods sent to players who are away in a region (a clientbound packet, whether it is for a
+    /// Horizon client only): delivered to the region's player before its next tick.
+    pub(super) away_out: Vec<(u128, horizon_protocol::packets::play::Clientbound, bool)>,
     /// Where the server thread's tick time goes while regions are resident.
     pub(super) prof: super::region_profile::TickProfile,
 }
@@ -343,6 +346,8 @@ struct Slot {
     fresh: bool,
     /// The connections of its players.
     conns: Vec<u32>,
+    /// Its players as native mods see them (`native_server_players`), as of the last time the region was home.
+    players: Vec<horizon_client::mod_api::NativeServerPlayer>,
     /// Its players' sleep counts as it last reported them.
     sleep: (i64, i64, i64),
 }
@@ -361,6 +366,7 @@ impl Slot {
             landed: false,
             fresh: false,
             conns: Vec::new(),
+            players: Vec::new(),
             sleep: (0, 0, 0),
         }
     }
@@ -988,6 +994,7 @@ impl Game<'_> {
             }
         }
         self.streaming.lent = Some(Arc::clone(&set.lent));
+        self.deliver_away_out_home();
         let pool = Arc::clone(
             self.regions
                 .entity_pool
@@ -1045,6 +1052,15 @@ impl Game<'_> {
                 shell.hub.copy_region_settings(&host.hub);
                 host.hub.give_away(&mut shell.hub);
                 shell.hub.wake_request |= host.hub.wake_request;
+                self.regions.away_out.retain(|(uuid, packet, horizon)| {
+                    let Some(g) = shell.hub.guests.iter().find(|g| g.placed && g.uuid == *uuid) else {
+                        return true;
+                    };
+                    if !*horizon || g.brand == "horizon" {
+                        shell.hub.send_to(g.conn, packet);
+                    }
+                    false
+                });
             }
             self.regions.prof.add(Step::Copy, copying);
             let spawning = std::time::Instant::now();
@@ -1171,6 +1187,20 @@ impl Game<'_> {
             host.hub.away_sleep = (a, s, d);
             host.hub.wake_request = false;
         }
+        // Native mods read the players away in a region from what it last reported.
+        if let Some(host) = self.lan.as_ref() {
+            for slot in set.games.iter_mut().filter(|s| !s.landed) {
+                if let Some(shell) = slot.game.as_ref().and_then(|w| w.lan.as_ref()) {
+                    slot.players = shell
+                        .hub
+                        .guests
+                        .iter()
+                        .filter(|g| g.placed)
+                        .map(|g| super::native_server::server_player(host, g))
+                        .collect();
+                }
+            }
+        }
         // Where its players stand: the areas the server keeps loaded for them.
         if let Some(host) = self.lan.as_mut() {
             host.hub.away_places = set
@@ -1208,6 +1238,11 @@ impl Game<'_> {
         match host.hub.away_server_conns() {
             None => return Some(Land::All("packet")),
             Some(conns) => {
+                // A native mod hook for a player (a command, a mod message, a leave) may reach any other
+                // player or their entities (`/invsee`, a trade, a voice group): every region comes home.
+                if !conns.is_empty() && host.hub.mods_loaded {
+                    return Some(Land::All("native mod"));
+                }
                 for c in conns {
                     match slot_of(c) {
                         Some(k) => add(k, "packet"),
@@ -1390,6 +1425,56 @@ impl Game<'_> {
         }
         self.lan = host;
         self.regions.idle.entry(dim).or_default().extend(back);
+        self.deliver_away_out_home();
+    }
+
+    /// The players native mods can see: those away in a resident region, as it last reported them.
+    pub(super) fn away_server_players(&self) -> Vec<horizon_client::mod_api::NativeServerPlayer> {
+        self.regions
+            .resident
+            .values()
+            .chain(self.regions.flight.iter().map(|(_, f)| &f.set))
+            .flat_map(|set| set.games.iter().filter(|s| !s.landed))
+            .flat_map(|s| s.players.iter().cloned())
+            .collect()
+    }
+
+    /// Queues `packet` for a player away in a region, for its next tick; false when `uuid` is not away.
+    /// `horizon_only`: only a Horizon client gets it.
+    pub(super) fn queue_for_away(
+        &mut self,
+        uuid: u128,
+        packet: horizon_protocol::packets::play::Clientbound,
+        horizon_only: bool,
+    ) -> bool {
+        let away = self.regions.resident.values().any(|set| {
+            set.games
+                .iter()
+                .any(|s| !s.landed && s.players.iter().any(|p| p.uuid == uuid))
+        });
+        if away {
+            if self.regions.away_out.len() >= 4096 {
+                self.regions.away_out.remove(0);
+            }
+            self.regions.away_out.push((uuid, packet, horizon_only));
+        }
+        away
+    }
+
+    /// What was queued for players who are home now goes out.
+    fn deliver_away_out_home(&mut self) {
+        let Some(host) = self.lan.as_ref() else {
+            return;
+        };
+        self.regions.away_out.retain(|(uuid, packet, horizon)| {
+            let Some(g) = host.hub.guests.iter().find(|g| g.placed && g.uuid == *uuid) else {
+                return true;
+            };
+            if !*horizon || g.brand == "horizon" {
+                host.hub.send_to(g.conn, packet);
+            }
+            false
+        });
     }
 
     /// Every resident region of every level back (before a save or a stop).
