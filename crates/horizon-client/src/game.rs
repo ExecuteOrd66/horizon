@@ -397,6 +397,7 @@ mod quick_actions;
 mod raids;
 mod random_textures;
 mod recipe_book;
+mod region_pool;
 mod region_profile;
 mod regions;
 mod remote;
