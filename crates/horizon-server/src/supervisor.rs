@@ -267,6 +267,7 @@ pub fn run(dir: &Path) -> Result<(), String> {
             config.engine.low_memory,
             config.engine.parallel_tick,
             &config.entities,
+            &config.regions,
             transfers.as_deref(),
         )
         .map_err(|e| format!("{}: {e}", program.display()))?;

@@ -2,7 +2,7 @@
 //! game/dedicated.rs). It reads the vanilla files the supervisor writes, takes console commands on stdin and
 //! logs on stdout.
 
-use crate::config::{Config, Entities};
+use crate::config::{Config, Entities, Regions};
 use std::{
     io::{BufRead, BufReader, Write},
     net::{Ipv4Addr, TcpStream},
@@ -240,6 +240,7 @@ pub fn spawn(
     low_memory: bool,
     parallel_tick: bool,
     entities: &Entities,
+    regions: &Regions,
     transfers: Option<&str>,
 ) -> std::io::Result<Child> {
     command(
@@ -249,6 +250,7 @@ pub fn spawn(
         low_memory,
         parallel_tick,
         entities,
+        regions,
         transfers,
     )?
     .spawn()
@@ -262,6 +264,7 @@ fn command(
     low_memory: bool,
     parallel_tick: bool,
     entities: &Entities,
+    regions: &Regions,
     transfers: Option<&str>,
 ) -> std::io::Result<Command> {
     // The game runs in the server folder, so a folder given relative to ours (`--dir srv`) would put its
@@ -303,6 +306,22 @@ fn command(
     // the variable alone, so one the operator set still works.
     if parallel_tick {
         command.env("HORIZON_PARALLEL_TICK", "1");
+    }
+    // `[regions] enabled`: region ticking runs on the parallel tick's helpers, so it turns both on, and passes its
+    // two numbers. A variable the operator already set wins, so `HORIZON_PARALLEL_TICK=0` still turns it off.
+    if regions.enabled {
+        for (name, value) in [
+            ("HORIZON_PARALLEL_TICK", "1".to_owned()),
+            (
+                "HORIZON_REGION_DEADLINE_MS",
+                regions.deadline_ms.to_string(),
+            ),
+            ("HORIZON_RESIDENT_TICKS", regions.resident_ticks.to_string()),
+        ] {
+            if std::env::var_os(name).is_none() {
+                command.env(name, value);
+            }
+        }
     }
     // `[entities] dab`: the game's switch and its three numbers (mobs/dab.rs). Off leaves the variables alone.
     if entities.dab {
@@ -454,6 +473,7 @@ mod tests {
                 low_memory,
                 false,
                 &Entities::default(),
+                &Regions::default(),
                 None,
             )
             .unwrap();
@@ -477,6 +497,7 @@ mod tests {
                 false,
                 parallel_tick,
                 &Entities::default(),
+                &Regions::default(),
                 None,
             )
             .unwrap();
@@ -490,6 +511,43 @@ mod tests {
     }
 
     #[test]
+    fn regions_reach_the_game_only_when_they_are_on() {
+        let env = |regions: Regions, name: &str| {
+            let dir = std::env::temp_dir();
+            let command = command(
+                Path::new("horizon-client"),
+                &dir,
+                &dir,
+                false,
+                false,
+                &Entities::default(),
+                &regions,
+                None,
+            )
+            .unwrap();
+            command
+                .get_envs()
+                .find(|(k, _)| *k == name)
+                .and_then(|(_, v)| v.map(|v| v.to_string_lossy().into_owned()))
+        };
+        assert_eq!(env(Regions::default(), "HORIZON_RESIDENT_TICKS"), None);
+        let on = Regions {
+            enabled: true,
+            deadline_ms: 30,
+            resident_ticks: 40,
+        };
+        assert_eq!(
+            env(on.clone(), "HORIZON_RESIDENT_TICKS").as_deref(),
+            Some("40")
+        );
+        assert_eq!(
+            env(on.clone(), "HORIZON_REGION_DEADLINE_MS").as_deref(),
+            Some("30")
+        );
+        assert_eq!(env(on, "HORIZON_PARALLEL_TICK").as_deref(), Some("1"));
+    }
+
+    #[test]
     fn dab_reaches_the_game_only_when_it_is_on() {
         let env = |entities: Entities, name: &str| {
             let dir = std::env::temp_dir();
@@ -500,6 +558,7 @@ mod tests {
                 false,
                 false,
                 &entities,
+                &Regions::default(),
                 None,
             )
             .unwrap();
@@ -554,6 +613,7 @@ mod tests {
                 false,
                 false,
                 &Entities::default(),
+                &Regions::default(),
                 transfers,
             )
             .unwrap();
@@ -738,6 +798,7 @@ mod tests {
                 false,
                 false,
                 &Entities::default(),
+                &Regions::default(),
                 None,
             ) {
                 Err(e) if e.raw_os_error() == Some(26) && tries < 50 => {

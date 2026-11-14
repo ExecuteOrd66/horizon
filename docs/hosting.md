@@ -762,6 +762,25 @@ leaving its school, a parrot imitating, a brain's durations) come from a random 
 on different threads do not wait for each other. The odds are vanilla's; the values are not the ones the level's
 random would have given ([mob-islands.md](mob-islands.md#every-turn-draws-its-own-random)).
 
+### Region ticking: `[regions]`
+
+Off by default. `[regions] enabled = true` ticks the world by regions: with players in two or more separate areas of a
+level, each area's chunks, entities and players are ticked on a thread of their own (a resident region), so a busy
+corner does not slow the rest. The server thread still does what no region owns (joins and leaves, chat and commands,
+the End's dragon fight). It applies at the next start. It turns the parallel tick on too, since regions share its helper
+threads. With it off, the tick is vanilla's serial one.
+
+```toml
+[regions]
+enabled = true
+deadline_ms = 50             # how long a tick waits for its regions; a slower one keeps going and comes home later
+resident_ticks = 20          # ticks a region stays on its thread before it comes home to be split anew
+```
+
+The environment variables still override it: `HORIZON_PARALLEL_TICK=0` keeps every tick serial, `HORIZON_REGION_THREADS=0`
+keeps the older parallel tick without regions, and `HORIZON_REGION_DEADLINE_MS` and `HORIZON_RESIDENT_TICKS` set the two
+numbers.
+
 ### Mob AI far from players: `[entities] dab`
 
 Off by default, because it is not vanilla's behaviour: mobs far from every player react more slowly. It is
