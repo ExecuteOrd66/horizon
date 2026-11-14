@@ -222,9 +222,23 @@ impl Regions {
     }
 
     /// From now on only region `k` (or all of them, `None`) owns chunks: a split of the level then moves out
-    /// that region's part alone.
+    /// that region's part alone, as part 0 of one.
     fn restrict(&self, k: Option<usize>) {
         self.only.store(k.unwrap_or(usize::MAX), Ordering::Relaxed);
+    }
+
+    /// The region a split is restricted to, if it is ([`Regions::restrict`]).
+    fn only_region(&self) -> Option<usize> {
+        match self.only.load(Ordering::Relaxed) {
+            usize::MAX => None,
+            k => Some(k),
+        }
+    }
+
+    /// How many parts a split makes: one while it is restricted to a region (its chunks are number 0), else every
+    /// region's.
+    pub(super) fn parts(&self) -> usize {
+        if self.only_region().is_some() { 1 } else { self.count }
     }
 
     /// The region that owns chunk `(x, z)`.
@@ -237,7 +251,7 @@ impl Regions {
         };
         match self.only.load(Ordering::Relaxed) {
             usize::MAX => r,
-            k => r.filter(|&r| r == k),
+            k => r.filter(|&r| r == k).map(|_| 0),
         }
     }
 
@@ -294,20 +308,6 @@ pub(super) struct ResidentSet {
     layout: Arc<Regions>,
     /// Ticks since they were all lent: the set comes home whole and is split anew every few periods.
     age: u32,
-}
-
-impl ResidentSet {
-    /// The chunks of the regions that are out on their threads, for the streamer.
-    fn rebuild_lent(&mut self) {
-        self.lent = Arc::new(
-            self.chunks
-                .iter()
-                .zip(&self.games)
-                .filter(|(_, s)| !s.landed)
-                .flat_map(|(c, _)| c.iter().map(|c| (c.x, c.z)))
-                .collect(),
-        );
-    }
 }
 
 /// Resident regions started on their threads this tick, not yet waited for.
@@ -1278,7 +1278,12 @@ impl Game<'_> {
         slot.game = Some(w);
         slot.landed = true;
         self.lan = host;
-        set.rebuild_lent();
+        // The set of lent chunks loses this region's, in place (the streamer's copy is let go first).
+        self.streaming.lent = None;
+        let lent = Arc::make_mut(&mut set.lent);
+        for c in &set.chunks[k] {
+            lent.remove(&(c.x, c.z));
+        }
         self.streaming.lent = Some(Arc::clone(&set.lent));
     }
 
@@ -1298,6 +1303,8 @@ impl Game<'_> {
                 .entity_pool
                 .get_or_insert_with(|| Arc::new(AtomicU32::new(self.next_entity + 1))),
         );
+        // The split is restricted to region `k`, which is then part 0 of 1: it costs what the region holds, not
+        // what the other regions or the level's count of regions add.
         let layout = Arc::clone(&set.layout);
         layout.restrict(Some(k));
         let in_region: HashMap<u32, usize> = host
@@ -1309,23 +1316,23 @@ impl Game<'_> {
             .collect();
         let guests = host
             .hub
-            .split_guests(layout.count, |conn| in_region.get(&conn).copied())
+            .split_guests(1, |conn| in_region.get(&conn).copied())
             .into_iter()
-            .nth(k)
+            .next()
             .unwrap_or_default();
         let tracker = host
             .hub
-            .lend_trackers(layout.count, |chunk| layout.of_chunk(chunk))
+            .lend_trackers(1, |chunk| layout.of_chunk(chunk))
             .into_iter()
-            .nth(k);
+            .next();
         let split = self.split_level(&layout);
         layout.restrict(None);
         let part = split
             .parts
             .into_iter()
-            .nth(k)
+            .next()
             .expect("a part for the region");
-        let chunks = split.chunks.into_iter().nth(k).unwrap_or_default();
+        let chunks = split.chunks.into_iter().next().unwrap_or_default();
         let mob_ids: Vec<u32> = part.mobs.iter().map(|m| m.id).collect();
         self.lend_region(&mut w, part);
         w.copy_world_settings_from(self);
@@ -1345,8 +1352,10 @@ impl Game<'_> {
         slot.fresh = true;
         slot.conns = conns;
         slot.age = 0;
+        self.streaming.lent = None;
+        let lent = Arc::make_mut(&mut set.lent);
+        lent.extend(chunks.iter().map(|c| (c.x, c.z)));
         set.chunks[k] = chunks;
-        set.rebuild_lent();
         self.streaming.lent = Some(Arc::clone(&set.lent));
     }
 
@@ -1475,7 +1484,7 @@ fn split<T>(v: &mut Vec<T>, regions: &Regions, at: impl Fn(&T) -> (f64, f64)) ->
             regions.of_block(x, z)
         })
         .collect();
-    let mut sizes = vec![0usize; regions.count];
+    let mut sizes = vec![0usize; regions.parts()];
     for r in places.iter().flatten() {
         sizes[*r] += 1;
     }
@@ -1507,7 +1516,7 @@ fn split_map<K: std::hash::Hash + Eq + Copy, V>(
     regions: &Regions,
     at: impl Fn(&K) -> (i32, i32),
 ) -> Vec<HashMap<K, V>> {
-    let mut out: Vec<HashMap<K, V>> = (0..regions.count).map(|_| HashMap::new()).collect();
+    let mut out: Vec<HashMap<K, V>> = (0..regions.parts()).map(|_| HashMap::new()).collect();
     for (k, v) in m.extract_if(|k, _| regions.of_chunk(at(k)).is_some()) {
         let r = regions.of_chunk(at(&k)).expect("filtered");
         out[r].insert(k, v);
@@ -1520,7 +1529,7 @@ fn fx_split<K: std::hash::Hash + Eq + Copy, V>(
     regions: &Regions,
     at: impl Fn(&K) -> (i32, i32),
 ) -> Vec<FxHashMap<K, V>> {
-    let mut out: Vec<FxHashMap<K, V>> = (0..regions.count).map(|_| Default::default()).collect();
+    let mut out: Vec<FxHashMap<K, V>> = (0..regions.parts()).map(|_| Default::default()).collect();
     for (k, v) in m.extract_if(|k, _| regions.of_chunk(at(k)).is_some()) {
         let r = regions.of_chunk(at(&k)).expect("filtered");
         out[r].insert(k, v);
@@ -1580,7 +1589,8 @@ impl Game<'_> {
     /// The level in place split into `regions`' parts: each region's chunks, block entities, ticks and
     /// entities moved out of this game's level; what no region owns stays.
     pub(super) fn split_level(&mut self, regions: &Regions) -> LevelSplit {
-        let n = regions.count;
+        let n = regions.parts();
+        let first = regions.only_region().unwrap_or(0);
         let of_chunk = |key: (i32, i32)| regions.of_chunk(key);
         let mut chunks: Vec<Vec<ChunkPos>> = vec![Vec::new(); n];
         for &(x, z) in self.world.chunks.keys() {
@@ -1602,7 +1612,7 @@ impl Game<'_> {
         let (chunks_ref, seeds_ref, tick_seeds_ref) = (&chunks, &seeds, &tick_seeds);
         let (worlds, ticks, sections) = std::thread::scope(|scope| {
             let worlds = scope.spawn(move || world.lend(n, of_chunk, seeds_ref));
-            let ticks = scope.spawn(move || block_ticks.lend(chunks_ref, tick_seeds_ref));
+            let ticks = scope.spawn(move || block_ticks.lend(chunks_ref, tick_seeds_ref, first));
             let sections = sections_of.lend(n, of_chunk);
             match (worlds.join(), ticks.join()) {
                 (Ok(w), Ok(t)) => (w, t, sections),

@@ -173,15 +173,15 @@ impl Ticks {
     }
     /// Each region's chunks' ticks moved into a `Ticks` of its own, for the region's block ticks on a thread of
     /// its own. Each region counts sub-ticks and block entity ids in a range of its own, so nothing it makes
-    /// clashes with another's; `seeds` give each its own random tick draws. [`Ticks::take_back`] returns it all.
-    pub fn lend(&mut self, chunks: &[Vec<ChunkPos>], seeds: &[i32]) -> Vec<Ticks> {
+    /// clashes with another's (`first`: the number of the first, when only a later region is lent); `seeds` give each its own random tick draws. [`Ticks::take_back`] returns it all.
+    pub fn lend(&mut self, chunks: &[Vec<ChunkPos>], seeds: &[i32], first: usize) -> Vec<Ticks> {
         let mut region_of: horizon_core::fast_hash::FxHashMap<(i32, i32), usize> =
             Default::default();
         let mut out: Vec<Ticks> = chunks
             .iter()
             .enumerate()
             .map(|(r, keys)| {
-                let band = (r as i64 + 1) << 40;
+                let band = ((first + r) as i64 + 1) << 40;
                 let mut t =
                     Ticks::new(seeds.get(r).copied().unwrap_or(r as i32) ^ self.random_tick_value);
                 t.sub_tick = self.sub_tick.wrapping_add(band);
@@ -509,7 +509,7 @@ mod region_tests {
         );
         ticks.schedule_fluid(0, BlockPos::new(-639, 64, 49), FluidKind::Water, 5);
         let regions = vec![vec![a], vec![b]];
-        let mut lent = ticks.lend(&regions, &[1, 2]);
+        let mut lent = ticks.lend(&regions, &[1, 2], 0);
         // Only the chunk no region holds stays.
         assert_eq!(ticks.blocks.count() + ticks.fluids.count(), 1);
         assert_eq!(lent[0].blocks.count(), 1);
