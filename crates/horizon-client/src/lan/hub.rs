@@ -979,6 +979,48 @@ impl Hub {
             g.sender.send(body.clone());
         }
     }
+    /// [`Self::broadcast`] for a tab list change: the players of the other hubs (the server's, other resident
+    /// regions') get it too, from the shared roster.
+    pub fn broadcast_tab(&self, packet: &C) {
+        self.broadcast(packet);
+        self.send_to_roster_others(&packet.encode());
+    }
+    /// Sends already encoded packet bytes to the players of the other hubs.
+    fn send_to_roster_others(&self, body: &[u8]) {
+        for e in self.lan.shared.roster_others(|c| self.guest(c).is_some()) {
+            e.sender.send(body.to_vec().into());
+        }
+    }
+    /// The roster entries of the players in other hubs, as list entries for a newcomer (those it may see).
+    fn roster_infos(&self, permission: u8, except_uuid: u128) -> Vec<play::PlayerInfo> {
+        self.lan
+            .shared
+            .roster_others(|c| self.guest(c).is_some())
+            .into_iter()
+            .filter(|e| e.uuid != except_uuid && self.sees(permission, e.uuid))
+            .map(|e| {
+                let mut info = e.info;
+                info.latency = Some(e.latency.load(Ordering::Relaxed));
+                info
+            })
+            .collect()
+    }
+    /// Puts this hub's placed players in the shared roster (or refreshes their entries).
+    pub fn publish_roster(&self) {
+        for g in self.guests.iter().filter(|g| g.placed && !g.fake) {
+            self.publish_guest(g);
+        }
+    }
+    fn publish_guest(&self, g: &Guest) {
+        self.lan.shared.roster_set(super::RosterEntry {
+            conn: g.conn,
+            uuid: g.uuid,
+            sender: g.sender.clone(),
+            info: self.player_info(g.uuid, &g.name, g.game_mode, 0),
+            latency: g.latency.clone(),
+            permission: g.permission,
+        });
+    }
     /// [`Self::broadcast`] to the held players as well, which keep a picture of
     /// the players and the entities while they wait for their hand-over.
     pub fn broadcast_watching(&self, packet: &C) {
@@ -1651,6 +1693,11 @@ impl Hub {
                     g.sender.send(joined.clone());
                 }
             }
+            for e in self.lan.shared.roster_others(|c| self.guest(c).is_some()) {
+                if self.sees(e.permission, uuid) {
+                    e.sender.send(joined.clone());
+                }
+            }
             self.guests[i].placed = true;
         }
         self.resend_teleport(i, None);
@@ -1677,6 +1724,8 @@ impl Hub {
                 o.latency.load(Ordering::Relaxed),
             ));
         }
+        // The players in other hubs (resident regions) are in the list too.
+        entries.extend(self.roster_infos(permission, uuid));
         self.guests[i].tab_hidden.extend(hidden);
         self.guests[i].send(&C::PlayerInfoUpdate(play::PlayerInfoUpdate {
             actions: Self::INFO_ACTIONS,
@@ -1692,6 +1741,10 @@ impl Hub {
             self.guests[i].sender.send(newcomer);
         } else {
             let level = self.hidden.get(&uuid).copied();
+            if level.is_none() {
+                self.send_to_roster_others(&newcomer);
+            }
+            self.publish_guest(&self.guests[i]);
             // A held player is shown the entities around it, so it must know the players
             // who join meanwhile, or its client drops their entity (`ClientPacketListener`
             // adds a player only with its list entry).
@@ -2670,6 +2723,12 @@ impl Hub {
 
     /// After every level: `PlayerList.tick`.
     pub fn end_tick(&mut self) {
+        // Players placed since the roster last saw them, and every 601 ticks all, with their current entries.
+        if self.ticks.is_multiple_of(601)
+            || self.guests.iter().any(|g| g.placed && !g.fake && !self.lan.shared.roster_has(g.conn))
+        {
+            self.publish_roster();
+        }
         let latencies: Vec<_> = self
             .guests
             .iter()
@@ -2686,7 +2745,7 @@ impl Hub {
                     ..Default::default()
                 })
                 .collect();
-            self.broadcast(&C::PlayerInfoUpdate(play::PlayerInfoUpdate {
+            self.broadcast_tab(&C::PlayerInfoUpdate(play::PlayerInfoUpdate {
                 actions: 16,
                 entries,
             }));
@@ -2752,12 +2811,25 @@ impl Hub {
             self.sync_attachments,
         );
         // To the held players too: they were told of this one, and see its entity.
+        self.lan.shared.roster_remove(g.conn);
         self.broadcast_watching(&C::PlayerInfoRemove(play::PlayerInfoRemove {
             uuids: vec![g.uuid],
         }));
         self.broadcast_watching(&C::RemoveEntities(play::RemoveEntities {
             ids: vec![g.entity_id],
         }));
+        self.send_to_roster_others(
+            &C::PlayerInfoRemove(play::PlayerInfoRemove {
+                uuids: vec![g.uuid],
+            })
+            .encode(),
+        );
+        self.send_to_roster_others(
+            &C::RemoveEntities(play::RemoveEntities {
+                ids: vec![g.entity_id],
+            })
+            .encode(),
+        );
         let left = C::SystemChat(play::SystemChat {
             content: yellow_names(
                 "multiplayer.player.left",
@@ -4313,7 +4385,7 @@ impl Hub {
                     let uuid = g.uuid;
                     // ServerGamePacketListenerImpl.handleClientInformation: UPDATE_HAT to everyone.
                     if hat != was_hat {
-                        self.broadcast(&C::PlayerInfoUpdate(play::PlayerInfoUpdate {
+                        self.broadcast_tab(&C::PlayerInfoUpdate(play::PlayerInfoUpdate {
                             actions: 128,
                             entries: vec![play::PlayerInfo {
                                 uuid,
@@ -4898,7 +4970,7 @@ impl Hub {
             param: mode as f32,
         }));
         g.send(&g.abilities());
-        self.broadcast(&C::PlayerInfoUpdate(play::PlayerInfoUpdate {
+        self.broadcast_tab(&C::PlayerInfoUpdate(play::PlayerInfoUpdate {
             actions: 4,
             entries: vec![play::PlayerInfo {
                 uuid,
@@ -4916,7 +4988,7 @@ impl Hub {
             Some(n) => self.nicknames.insert(uuid, n),
             None => self.nicknames.remove(&uuid),
         };
-        self.broadcast(&C::PlayerInfoUpdate(play::PlayerInfoUpdate {
+        self.broadcast_tab(&C::PlayerInfoUpdate(play::PlayerInfoUpdate {
             actions: 0x20,
             entries: vec![play::PlayerInfo {
                 uuid,
@@ -4934,7 +5006,7 @@ impl Hub {
             Some(n) => self.list_names.insert(uuid, n),
             None => self.list_names.remove(&uuid),
         };
-        self.broadcast(&C::PlayerInfoUpdate(play::PlayerInfoUpdate {
+        self.broadcast_tab(&C::PlayerInfoUpdate(play::PlayerInfoUpdate {
             actions: 0x20,
             entries: vec![play::PlayerInfo {
                 uuid,

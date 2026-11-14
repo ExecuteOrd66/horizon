@@ -449,6 +449,9 @@ pub struct Shared {
     accepts_transfers: AtomicBool,
     /// PlayerList.players in join order: profile id and name.
     online: Mutex<Vec<(u128, String)>>,
+    /// Every placed player's tab list entry and way to reach them, whichever hub holds them (the server's or a
+    /// resident region's), so a join, a leave or a change reaches the lists of the players in other hubs too.
+    roster: Mutex<Vec<RosterEntry>>,
     next: AtomicU32,
     stop: AtomicBool,
     random: Mutex<u64>,
@@ -678,6 +681,39 @@ pub fn base64(data: &[u8]) -> String {
 }
 
 /// A running LAN server.
+/// A placed player as every hub sees them: their connection, tab list entry and latency.
+#[derive(Clone)]
+pub struct RosterEntry {
+    pub conn: u32,
+    pub uuid: u128,
+    pub sender: PlayerSender,
+    pub info: play::PlayerInfo,
+    pub latency: Arc<std::sync::atomic::AtomicI32>,
+    pub permission: u8,
+}
+
+impl Shared {
+    /// Adds or replaces a player's roster entry.
+    pub fn roster_set(&self, entry: RosterEntry) {
+        let mut roster = self.roster.lock().unwrap();
+        match roster.iter_mut().find(|e| e.conn == entry.conn) {
+            Some(e) => *e = entry,
+            None => roster.push(entry),
+        }
+    }
+    pub fn roster_has(&self, conn: u32) -> bool {
+        self.roster.lock().unwrap().iter().any(|e| e.conn == conn)
+    }
+    /// Drops a player's roster entry (they left).
+    pub fn roster_remove(&self, conn: u32) {
+        self.roster.lock().unwrap().retain(|e| e.conn != conn);
+    }
+    /// The roster entries whose connection `own` does not hold: the players of the other hubs.
+    pub fn roster_others(&self, own: impl Fn(u32) -> bool) -> Vec<RosterEntry> {
+        self.roster.lock().unwrap().iter().filter(|e| !own(e.conn)).cloned().collect()
+    }
+}
+
 pub struct Lan {
     pub shared: Arc<Shared>,
     events: Receiver<NetEvent>,
@@ -730,6 +766,7 @@ impl Lan {
             enable_status: AtomicBool::new(enable_status),
             accepts_transfers: AtomicBool::new(config.accepts_transfers),
             online: Mutex::new(Vec::new()),
+            roster: Mutex::new(Vec::new()),
             next: AtomicU32::new(1),
             stop: AtomicBool::new(false),
             connections: AtomicUsize::new(0),
