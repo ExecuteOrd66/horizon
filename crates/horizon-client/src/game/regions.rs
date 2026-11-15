@@ -640,20 +640,20 @@ impl Game<'_> {
         ids.extend(w.boats.iter().map(|b| b.id));
         ids.extend(w.carts.iter().map(|c| c.id));
         ids.extend(w.armor_stands.iter().map(|s| s.id));
-        ids.extend(w.orbs.iter().map(|o| o.id as u32));
-        ids.extend(w.creatures.projectiles.iter().map(|p| p.id as u32));
-        ids.extend(w.falling.iter().map(|f| f.id as u32));
-        ids.extend(w.tnts.iter().map(|t| t.id as u32));
-        ids.extend(w.tridents.iter().map(|t| t.id as u32));
-        ids.extend(w.rockets.iter().map(|r| r.id as u32));
-        ids.extend(w.crystals.iter().map(|c| c.id as u32));
-        ids.extend(w.bolts.iter().map(|b| b.id as u32));
-        ids.extend(w.ominous_spawners.iter().map(|o| o.id as u32));
-        ids.extend(w.breath_clouds.iter().map(|b| b.id as u32));
-        ids.extend(w.paintings.iter().map(|p| p.id as u32));
-        ids.extend(w.item_frames.iter().map(|f| f.id as u32));
-        ids.extend(w.cushions.iter().map(|c| c.id as u32));
-        ids.extend(w.others.iter().map(|o| o.id as u32));
+        ids.extend(w.orbs.iter().map(|o| o.id));
+        ids.extend(w.creatures.projectiles.iter().map(|p| p.id));
+        ids.extend(w.falling.iter().map(|f| f.id));
+        ids.extend(w.tnts.iter().map(|t| t.id));
+        ids.extend(w.tridents.iter().map(|t| t.id));
+        ids.extend(w.rockets.iter().map(|r| r.id));
+        ids.extend(w.crystals.iter().map(|c| c.id));
+        ids.extend(w.bolts.iter().map(|b| b.id));
+        ids.extend(w.ominous_spawners.iter().map(|o| o.id));
+        ids.extend(w.breath_clouds.iter().map(|b| b.id));
+        ids.extend(w.paintings.iter().map(|p| p.id));
+        ids.extend(w.item_frames.iter().map(|f| f.id));
+        ids.extend(w.cushions.iter().map(|c| c.id));
+        ids.extend(w.others.iter().map(|o| o.id));
         for id in ids {
             if let Some(u) = self.persist.uuids.remove(&id) {
                 w.persist.uuids.insert(id, u);
@@ -684,7 +684,7 @@ impl Game<'_> {
         w.world.game_time = self.world.game_time;
         w.world.day_time = self.world.day_time;
         w.world.weather = self.world.weather;
-        w.world.health_rules = self.world.health_rules.clone();
+        w.world.health_rules = self.world.health_rules;
         w.world.watched = self.world.watched.clone();
     }
 

@@ -1006,7 +1006,7 @@ impl Hub {
     /// Sends already encoded packet bytes to the players of the other hubs.
     fn send_to_roster_others(&self, body: &[u8]) {
         for e in self.lan.shared.roster_others(|c| self.guest(c).is_some()) {
-            e.sender.send(body.to_vec().into());
+            e.sender.send(body.to_vec());
         }
     }
     /// The roster entries of the players in other hubs, as list entries for a newcomer (those it may see).
