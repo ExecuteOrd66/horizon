@@ -1094,9 +1094,17 @@ impl Entities {
 
     /// One tracker for each of `regions`, holding the states of the entities last seen in its chunks
     /// (`region_of` a chunk's region); what no region owns stays.
-    pub fn lend(&mut self, regions: usize, region_of: impl Fn((i32, i32)) -> Option<usize>) -> Vec<Entities> {
+    pub fn lend(
+        &mut self,
+        regions: usize,
+        region_of: impl Fn((i32, i32)) -> Option<usize>,
+    ) -> Vec<Entities> {
         let mut out: Vec<Entities> = (0..regions)
-            .map(|_| Entities { range_percent: self.range_percent, tick: self.tick, ..Default::default() })
+            .map(|_| Entities {
+                range_percent: self.range_percent,
+                tick: self.tick,
+                ..Default::default()
+            })
             .collect();
         let chunk = |s: &ServerEntity| (s.section[0], s.section[2]);
         for (id, s) in std::mem::take(&mut self.parked) {

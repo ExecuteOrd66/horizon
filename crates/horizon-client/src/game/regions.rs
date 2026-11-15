@@ -238,7 +238,11 @@ impl Regions {
     /// How many parts a split makes: one while it is restricted to a region (its chunks are number 0), else every
     /// region's.
     pub(super) fn parts(&self) -> usize {
-        if self.only_region().is_some() { 1 } else { self.count }
+        if self.only_region().is_some() {
+            1
+        } else {
+            self.count
+        }
     }
 
     /// The region that owns chunk `(x, z)`.
@@ -1058,7 +1062,12 @@ impl Game<'_> {
                 host.hub.give_away(&mut shell.hub);
                 shell.hub.wake_request |= host.hub.wake_request;
                 self.regions.away_out.retain(|(uuid, packet, horizon)| {
-                    let Some(g) = shell.hub.guests.iter().find(|g| g.placed && g.uuid == *uuid) else {
+                    let Some(g) = shell
+                        .hub
+                        .guests
+                        .iter()
+                        .find(|g| g.placed && g.uuid == *uuid)
+                    else {
                         return true;
                     };
                     if !*horizon || g.brand == "horizon" {

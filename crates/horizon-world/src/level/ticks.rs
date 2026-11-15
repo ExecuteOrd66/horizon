@@ -426,11 +426,20 @@ mod block_event_queue_tests {
         }
         let chunks = vec![vec![ChunkPos::new(0, 0)]];
         let mut lent = ticks.lend(&chunks, &[1], 0);
-        assert_eq!(ticks.block_events.iter().copied().collect::<Vec<_>>(), [at(40, 1), at(41, 3)]);
-        assert_eq!(lent[0].block_events.iter().copied().collect::<Vec<_>>(), [at(1, 0), at(2, 2)]);
+        assert_eq!(
+            ticks.block_events.iter().copied().collect::<Vec<_>>(),
+            [at(40, 1), at(41, 3)]
+        );
+        assert_eq!(
+            lent[0].block_events.iter().copied().collect::<Vec<_>>(),
+            [at(1, 0), at(2, 2)]
+        );
         ticks.take_back(lent.remove(0), &chunks[0]);
         assert_eq!(ticks.block_events.len(), 4);
-        assert!(!ticks.queue_block_event(at(1, 0)), "the dedupe set has them again");
+        assert!(
+            !ticks.queue_block_event(at(1, 0)),
+            "the dedupe set has them again"
+        );
     }
 
     #[test]

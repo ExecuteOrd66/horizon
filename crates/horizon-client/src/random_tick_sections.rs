@@ -83,10 +83,16 @@ impl RandomTickSections {
         self.chunks.remove(key);
     }
     /// Each region's chunks' cached sections, moved out for the region's ticks.
-    pub fn lend(&mut self, regions: usize, region_of: impl Fn((i32, i32)) -> Option<usize>) -> Vec<Self> {
+    pub fn lend(
+        &mut self,
+        regions: usize,
+        region_of: impl Fn((i32, i32)) -> Option<usize>,
+    ) -> Vec<Self> {
         let mut out: Vec<Self> = (0..regions).map(|_| Self::default()).collect();
         for (key, cached) in self.chunks.extract_if(|key, _| region_of(*key).is_some()) {
-            out[region_of(key).expect("extracted for its region")].chunks.insert(key, cached);
+            out[region_of(key).expect("extracted for its region")]
+                .chunks
+                .insert(key, cached);
         }
         out
     }

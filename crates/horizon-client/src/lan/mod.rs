@@ -698,17 +698,34 @@ pub struct RosterEntry {
 impl Shared {
     /// The scoreboard a player's client has, kept here while a region holds the player.
     pub fn roster_lend_scoreboard(&self, conn: u32, view: scoreboard::View) {
-        if let Some(e) = self.roster.lock().unwrap().iter_mut().find(|e| e.conn == conn) {
+        if let Some(e) = self
+            .roster
+            .lock()
+            .unwrap()
+            .iter_mut()
+            .find(|e| e.conn == conn)
+        {
             e.scoreboard = Some(view);
         }
     }
     /// The scoreboard kept for a player coming home (and the entry stops keeping one).
     pub fn roster_return_scoreboard(&self, conn: u32) -> Option<scoreboard::View> {
-        self.roster.lock().unwrap().iter_mut().find(|e| e.conn == conn).and_then(|e| e.scoreboard.take())
+        self.roster
+            .lock()
+            .unwrap()
+            .iter_mut()
+            .find(|e| e.conn == conn)
+            .and_then(|e| e.scoreboard.take())
     }
     /// Sends the scoreboard changes since each kept view to the players whose connection `own` does not hold.
     pub fn roster_sync_scoreboard(&self, own: impl Fn(u32) -> bool, view: &scoreboard::View) {
-        for e in self.roster.lock().unwrap().iter_mut().filter(|e| !own(e.conn)) {
+        for e in self
+            .roster
+            .lock()
+            .unwrap()
+            .iter_mut()
+            .filter(|e| !own(e.conn))
+        {
             let Some(old) = e.scoreboard.as_ref().filter(|old| *old != view) else {
                 continue;
             };
@@ -739,7 +756,13 @@ impl Shared {
     }
     /// The roster entries whose connection `own` does not hold: the players of the other hubs.
     pub fn roster_others(&self, own: impl Fn(u32) -> bool) -> Vec<RosterEntry> {
-        self.roster.lock().unwrap().iter().filter(|e| !own(e.conn)).cloned().collect()
+        self.roster
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| !own(e.conn))
+            .cloned()
+            .collect()
     }
 }
 

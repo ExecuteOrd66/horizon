@@ -140,7 +140,10 @@ impl ServerEntities {
     }
 
     /// Takes out the entities `take` says to, with their ids.
-    pub(super) fn extract_if(&mut self, mut take: impl FnMut(&ServerEntity) -> bool) -> Vec<(i32, ServerEntity)> {
+    pub(super) fn extract_if(
+        &mut self,
+        mut take: impl FnMut(&ServerEntity) -> bool,
+    ) -> Vec<(i32, ServerEntity)> {
         let mut out = Vec::new();
         for (slot, entry) in self.slots.iter_mut().enumerate() {
             if entry.as_ref().is_some_and(|(_, s)| take(s)) {
