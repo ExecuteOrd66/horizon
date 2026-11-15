@@ -355,7 +355,7 @@ impl World {
         let mut w = World::new(self.air, 0);
         w.shape = self.shape;
         w.fast_lava = self.fast_lava;
-        w.health_rules = self.health_rules.clone();
+        w.health_rules = self.health_rules;
         w.game_time = self.game_time;
         w.day_time = self.day_time;
         w.end_clock = self.end_clock;
